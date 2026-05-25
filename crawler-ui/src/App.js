@@ -7,8 +7,11 @@ function App() {
 
   const resultsRef = useRef(null);
 
+  // ✅ backend base URL from .env
+  const API_BASE = process.env.REACT_APP_API_URL;
+
   const startCrawl = () => {
-    fetch("http://localhost:8080/api/crawl", {
+    fetch(`${API_BASE}/api/crawl`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -22,17 +25,19 @@ function App() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      fetch("http://localhost:8080/api/crawl/status")
+      fetch(`${API_BASE}/api/crawl/status`)
         .then(res => res.json())
-        .then(data => setStatus(data));
+        .then(data => setStatus(data))
+        .catch(err => console.log("status error:", err));
 
-      fetch("http://localhost:8080/api/crawl/results")
+      fetch(`${API_BASE}/api/crawl/results`)
         .then(res => res.json())
-        .then(data => setResults(data));
+        .then(data => setResults(data))
+        .catch(err => console.log("results error:", err));
     }, 2000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [API_BASE]);
 
   // 🔥 Auto scroll like live feed
   useEffect(() => {
@@ -44,7 +49,6 @@ function App() {
   return (
     <div style={styles.container}>
 
-      {/* Background animation */}
       <div style={styles.bg}></div>
 
       <h1 style={styles.title}>🕸️ Crawler Monitor</h1>
@@ -65,7 +69,11 @@ function App() {
       {/* STATS */}
       <div style={styles.stats}>
         <Stat label="URLs" value={status.totalUrls || 0} />
-        <Stat label="Status" value={status.isRunning ? "RUNNING" : "STOPPED"} glow={status.isRunning} />
+        <Stat
+          label="Status"
+          value={status.isRunning ? "RUNNING" : "STOPPED"}
+          glow={status.isRunning}
+        />
         <Stat label="Hits" value={status.cacheHits || 0} />
         <Stat label="Miss" value={status.cacheMisses || 0} />
       </div>
@@ -79,32 +87,39 @@ function App() {
         {results.slice(-50).map((item, i) => (
           <div key={i} style={styles.line}>
             <span style={styles.dot}>●</span>
+
             <span style={styles.domain}>
-              {new URL(item.url).hostname}
+              {item.url ? new URL(item.url).hostname : ""}
             </span>
+
             <span style={styles.path}>
-              {new URL(item.url).pathname}
+              {item.url ? new URL(item.url).pathname : ""}
             </span>
           </div>
         ))}
       </div>
-
     </div>
   );
 }
 
+// 🔥 Stat component
 function Stat({ label, value, glow }) {
   return (
-    <div style={{
-      ...styles.card,
-      boxShadow: glow ? "0 0 15px #22c55e" : "0 0 10px rgba(0,0,0,0.5)"
-    }}>
+    <div
+      style={{
+        ...styles.card,
+        boxShadow: glow
+          ? "0 0 15px #22c55e"
+          : "0 0 10px rgba(0,0,0,0.5)"
+      }}
+    >
       <div style={styles.value}>{value}</div>
       <div style={styles.label}>{label}</div>
     </div>
   );
 }
 
+// 🎨 styles
 const styles = {
   container: {
     background: "#020617",
@@ -116,7 +131,6 @@ const styles = {
     overflow: "hidden"
   },
 
-  // 🔥 animated crawling dots
   bg: {
     position: "absolute",
     width: "100%",
@@ -130,7 +144,6 @@ const styles = {
   title: {
     textAlign: "center",
     marginBottom: "20px",
-    zIndex: 1,
     position: "relative"
   },
 
@@ -139,7 +152,6 @@ const styles = {
     justifyContent: "center",
     gap: "10px",
     marginBottom: "20px",
-    zIndex: 1,
     position: "relative"
   },
 
@@ -165,9 +177,7 @@ const styles = {
     display: "flex",
     justifyContent: "center",
     gap: "15px",
-    marginBottom: "20px",
-    zIndex: 1,
-    position: "relative"
+    marginBottom: "20px"
   },
 
   card: {
@@ -196,9 +206,7 @@ const styles = {
     height: "400px",
     overflowY: "auto",
     border: "1px solid #22c55e",
-    fontSize: "13px",
-    zIndex: 1,
-    position: "relative"
+    fontSize: "13px"
   },
 
   line: {
