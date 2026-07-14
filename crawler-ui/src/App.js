@@ -40,11 +40,11 @@ function App() {
   }, [API_BASE]);
 
   // 🔥 Auto scroll like live feed
-  useEffect(() => {
-    if (resultsRef.current) {
-      resultsRef.current.scrollTop = resultsRef.current.scrollHeight;
-    }
-  }, [results]);
+ // useEffect(() => {
+  //if (status.isRunning && resultsRef.current) {
+ //   resultsRef.current.scrollTop = resultsRef.current.scrollHeight;
+  //}
+//}, [results, status.isRunning]);
 
   return (
     <div style={styles.container}>

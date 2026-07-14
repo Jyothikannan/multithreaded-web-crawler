@@ -13,12 +13,14 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.*;
-
+import java.util.concurrent.atomic.AtomicInteger;
 @Service
 public class CrawlerService {
 
     @Autowired
     private ExecutorService executorService;
+    private final AtomicInteger activeWorkers = new AtomicInteger(0);
+  
 
     private BlockingQueue<UrlTask> urlQueue = new LinkedBlockingQueue<>();
 
@@ -37,7 +39,7 @@ public class CrawlerService {
     private List<PageResult> results =
             new CopyOnWriteArrayList<>();
 
-    private boolean crawling = false;
+    private volatile boolean crawling = false;
 
     private int cacheHits = 0;
     private int cacheMisses = 0;
@@ -47,68 +49,75 @@ public class CrawlerService {
     // 🚀 Start Crawl
     public void startCrawling(String url, int maxDepth) {
 
-        System.out.println("Starting crawl for: " + url);
+    System.out.println("Starting crawl for: " + url);
 
-        // reset
-        visitedUrls.clear();
-        results.clear();
-        urlQueue.clear();
+    // reset
+    visitedUrls.clear();
+    results.clear();
+    urlQueue.clear();
 
-        cacheHits = 0;
-        cacheMisses = 0;
+    activeWorkers.set(0);   // <-- Add this
 
-        crawling = true;
+    cacheHits = 0;
+    cacheMisses = 0;
 
-        try {
-            baseDomain = new java.net.URL(url).getHost();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+    crawling = true;
 
-        urlQueue.offer(new UrlTask(url, 0));
-
-        // 5 worker threads
-        for (int i = 0; i < 5; i++) {
-            executorService.submit(() -> processUrls(maxDepth));
-        }
+    try {
+        baseDomain = new java.net.URL(url).getHost();
+    } catch (Exception e) {
+        e.printStackTrace();
+        return;
     }
 
-    // 🔁 Worker Thread Logic
-    private void processUrls(int maxDepth) {
+    urlQueue.offer(new UrlTask(url, 0));
 
-        while (true) {
+    // Start 5 worker threads
+    for (int i = 0; i < 5; i++) {
+        executorService.submit(() -> processUrls(maxDepth));
+    }
+}
+    // 🔁 Worker Thread Logic
+  private void processUrls(int maxDepth) {
+
+    while (true) {
+
+        try {
+
+            UrlTask task = urlQueue.poll(2, TimeUnit.SECONDS);
+
+            // No work available
+            if (task == null) {
+
+                // Stop only if nobody is working AND queue is empty
+                if (urlQueue.isEmpty() && activeWorkers.get() == 0) {
+                    crawling = false;
+                    break;
+                }
+
+                continue;
+            }
+
+            activeWorkers.incrementAndGet();
 
             try {
-
-                UrlTask task = urlQueue.poll();
-
-                if (task == null) {
-
-                    Thread.sleep(300);
-
-                    // stop if queue empty
-                    if (urlQueue.isEmpty()) {
-                        crawling = false;
-                        return;
-                    }
-
-                    continue;
-                }
 
                 String currentUrl = task.getUrl();
                 int currentDepth = task.getDepth();
 
-                // depth limit
                 if (currentDepth > maxDepth)
                     continue;
 
-                // max page limit
                 if (visitedUrls.size() >= MAX_PAGES) {
                     crawling = false;
-                    return;
+                    break;
                 }
 
-                // cache check
+                // Skip duplicate pages
+                if (!visitedUrls.add(currentUrl))
+                    continue;
+
+                // Cache check
                 if (cache.contains(currentUrl)) {
                     cacheHits++;
                     continue;
@@ -117,87 +126,58 @@ public class CrawlerService {
                     cache.put(currentUrl);
                 }
 
-                // duplicate check
-                if (!visitedUrls.add(currentUrl))
-                    continue;
-
                 System.out.println(
                         Thread.currentThread().getName()
                                 + " crawling: "
                                 + currentUrl
                 );
 
-                // 🔥 Fetch title
-                String title = "No Title";
+                String title = currentUrl;
 
                 try {
-                    Document doc =
-                            Jsoup.connect(currentUrl)
-                                    .timeout(5000)
-                                    .get();
+                    Document doc = Jsoup.connect(currentUrl)
+                            .timeout(5000)
+                            .get();
 
-                    title = doc.title();
-
-                    if (title == null || title.isBlank()) {
-                        title = currentUrl;
+                    if (!doc.title().isBlank()) {
+                        title = doc.title();
                     }
 
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) {}
 
-                // store dashboard result
-                results.add(
-                        new PageResult(title, currentUrl)
-                );
+                results.add(new PageResult(title, currentUrl));
 
-                // extract child links
-                Set<String> links;
+                Set<String> links = parser.extractLinks(currentUrl);
 
-                try {
-                    links = parser.extractLinks(currentUrl);
-                } catch (Exception e) {
-                    continue;
-                }
-
-                // 🔥 enqueue children (CLEAN VERSION)
                 for (String link : links) {
 
-                    try {
+                    if (link == null || !link.startsWith("http"))
+                        continue;
 
-                        if (link == null || !link.startsWith("http"))
-                            continue;
+                    if (link.contains("#"))
+                        link = link.split("#")[0];
 
-                        // ✅ remove fragment (#section)
-                        if (link.contains("#")) {
-                            link = link.split("#")[0];
-                        }
+                    if (link.endsWith("/"))
+                        link = link.substring(0, link.length() - 1);
 
-                        // ✅ remove trailing slash
-                        if (link.endsWith("/")) {
-                            link = link.substring(0, link.length() - 1);
-                        }
+                    if (link.contains(baseDomain)
+                            && !visitedUrls.contains(link)) {
 
-                        // ✅ restrict to same domain
-                        if (link.contains(baseDomain)) {
-
-                            urlQueue.offer(
-                                    new UrlTask(
-                                            link,
-                                            currentDepth + 1
-                                    )
-                            );
-                        }
-
-                    } catch (Exception ignored) {
+                        urlQueue.offer(
+                                new UrlTask(link, currentDepth + 1)
+                        );
                     }
                 }
 
-            } catch (Exception e) {
-                e.printStackTrace();
+            } finally {
+                activeWorkers.decrementAndGet();
             }
+
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
-
+}
     // Dashboard Methods
 
     public List<PageResult> getResults() {
